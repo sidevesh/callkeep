@@ -1,21 +1,14 @@
 import 'dart:async';
 import 'dart:io';
-
-import 'package:flutter/material.dart'
-    show
-        AlertDialog,
-        BuildContext,
-        Navigator,
-        Text,
-        TextButton,
-        Widget,
-        showDialog;
 import 'package:flutter/services.dart' show MethodCall, MethodChannel;
-
 import 'actions.dart';
 import 'event.dart';
 
+typedef SetupDefaultPhoneAccountShowUserPromptCallback = Future<bool> Function();
+
 bool get isIOS => Platform.isIOS;
+bool get isAndroid => Platform.isAndroid;
+
 bool get supportConnectionService =>
     !isIOS && int.parse(Platform.version) >= 23;
 
@@ -29,17 +22,13 @@ class FlutterCallkeep extends EventManager {
   static final FlutterCallkeep _instance = FlutterCallkeep._internal();
   static const MethodChannel _channel = MethodChannel('FlutterCallKeep.Method');
   static const MethodChannel _event = MethodChannel('FlutterCallKeep.Event');
-  BuildContext? _context;
 
-  Future<void> setup(BuildContext? context, Map<String, dynamic> options,
-      {bool backgroundMode = false}) async {
-    _context = context;
-    if (!isIOS) {
-      await _setupAndroid(
-          options['android'] as Map<String, dynamic>, backgroundMode);
-      return;
+  Future<void> setup(Map<String, dynamic> options) async {
+    if (isAndroid) {
+      await _setupAndroid(options['android'] as Map<String, dynamic>);
+    } else if (isIOS) {
+      await _setupIOS(options['ios'] as Map<String, dynamic>);
     }
-    await _setupIOS(options['ios'] as Map<String, dynamic>);
   }
 
   Future<void> registerPhoneAccount() async {
@@ -57,29 +46,29 @@ class FlutterCallkeep extends EventManager {
     return _channel.invokeMethod<void>('registerEvents', <String, dynamic>{});
   }
 
-  Future<bool> hasDefaultPhoneAccount(
-      BuildContext context, Map<String, dynamic> options) async {
-    _context = context;
-    if (!isIOS) {
-      return await _hasDefaultPhoneAccount(options);
-    }
-
-    // return true on iOS because we don't want to block the endUser
-    return true;
-  }
 
   Future<bool?> _checkDefaultPhoneAccount() async {
     return await _channel
-        .invokeMethod<bool>('checkDefaultPhoneAccount', <String, dynamic>{});
+      .invokeMethod<bool>('checkDefaultPhoneAccount', <String, dynamic>{});
   }
 
-  Future<bool> _hasDefaultPhoneAccount(Map<String, dynamic> options) async {
-    final hasDefault = await _checkDefaultPhoneAccount();
-    final shouldOpenAccounts = await _alert(options, hasDefault);
+  Future<bool> setupDefaultPhoneAccount(SetupDefaultPhoneAccountShowUserPromptCallback showUserPrompt) => _setupDefaultPhoneAccount(showUserPrompt);
+
+  Future<bool> _setupDefaultPhoneAccount(SetupDefaultPhoneAccountShowUserPromptCallback showUserPrompt) async {
+    if (isIOS) {
+      return true;
+    }
+
+    bool? hasDefault = await _checkDefaultPhoneAccount();
+    bool shouldOpenAccounts = false;
+    if (hasDefault != false) {
+      shouldOpenAccounts = await showUserPrompt();
+    }
     if (shouldOpenAccounts) {
       await _openPhoneAccounts();
       return true;
     }
+
     return false;
   }
 
@@ -322,40 +311,39 @@ class FlutterCallkeep extends EventManager {
         .invokeMethod<void>('setup', <String, dynamic>{'options': options});
   }
 
-  Future<bool> _setupAndroid(
-      Map<String, dynamic> options, bool backgroundMode) async {
+  Future<void> _setupAndroid(Map<String, dynamic> options) async {
     await _channel.invokeMethod<void>('setup', {'options': options});
+  }
 
-    if (backgroundMode) {
+  Future<bool> setupPermissions() async {
+    if (isIOS) {
       return true;
     }
 
-    final additionalPermissions = options['additionalPermissions'] ?? [];
-    final showAccountAlert = await _checkPhoneAccountPermission(
-        additionalPermissions.cast<String>() as List<String>);
-    final shouldOpenAccounts = await _alert(options, showAccountAlert);
-
-    if (shouldOpenAccounts) {
-      await _openPhoneAccounts();
+    if (await hasPermissions()) {
       return true;
     }
-    return false;
+    final additionalPermissions = [];
+
+    return await _checkPhoneAccountPermission(additionalPermissions.cast<String>() as List<String>);
   }
 
   Future<void> openPhoneAccounts() => _openPhoneAccounts();
 
   Future<void> _openPhoneAccounts() async {
-    if (!Platform.isAndroid) {
+    if (isIOS) {
       return;
     }
+
     await _channel.invokeMethod<void>('openPhoneAccounts', <String, dynamic>{});
   }
 
   Future<bool> _checkPhoneAccountPermission(
       List<String>? optionalPermissions) async {
-    if (!Platform.isAndroid) {
+    if (isIOS) {
       return true;
     }
+
     var resp = await _channel
         .invokeMethod<bool>('checkPhoneAccountPermission', <String, dynamic>{
       'optionalPermissions': optionalPermissions ?? [],
@@ -364,48 +352,6 @@ class FlutterCallkeep extends EventManager {
       return resp;
     }
     return false;
-  }
-
-  Future<bool> _alert(
-      Map<String, dynamic> options, bool? showAccountAlert) async {
-    if (_context == null ||
-        (showAccountAlert != null && showAccountAlert == false)) {
-      return false;
-    }
-    var resp = await _showAlertDialog(
-        _context!,
-        options['alertTitle'] as String,
-        options['alertDescription'] as String,
-        options['cancelButton'] as String,
-        options['okButton'] as String);
-    if (resp != null) {
-      return resp;
-    }
-    return false;
-  }
-
-  Future<bool?> _showAlertDialog(BuildContext context, String? alertTitle,
-      String? alertDescription, String? cancelButton, String? okButton) async {
-    return await showDialog<bool>(
-      context: context,
-      builder: (BuildContext context) => AlertDialog(
-        title: Text(alertTitle ?? 'Permissions required'),
-        content: Text(alertDescription ??
-            'This application needs to access your phone accounts'),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () =>
-                Navigator.of(context, rootNavigator: true).pop(false),
-            child: Text(cancelButton ?? 'Cancel'),
-          ),
-          TextButton(
-            onPressed: () =>
-                Navigator.of(context, rootNavigator: true).pop(true),
-            child: Text(okButton ?? 'ok'),
-          ),
-        ],
-      ),
-    );
   }
 
   Future<void> setForegroundServiceSettings(
