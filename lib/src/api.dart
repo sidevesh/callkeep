@@ -8,6 +8,7 @@ import 'actions.dart';
 import 'event.dart';
 
 bool get isIOS => Platform.isIOS;
+bool get isAndroid => Platform.isAndroid;
 bool get supportConnectionService =>
     !isIOS && int.parse(Platform.version) >= 23;
 
@@ -32,14 +33,11 @@ class FlutterCallkeep extends EventManager {
     bool backgroundMode = false,
   }) async {
     _showAlertDialog = showAlertDialog;
-    if (!isIOS) {
-      await _setupAndroid(
-        options: options['android'],
-        backgroundMode: backgroundMode,
-      );
-      return;
+    if (isAndroid) {
+      await _setupAndroid(options: options['android']);
+    } else if (isIOS) {
+      await _setupIOS(options: options['ios']);
     }
-    await _setupIOS(options: options['ios']);
   }
 
   Future<void> registerPhoneAccount() async {
@@ -347,21 +345,19 @@ class FlutterCallkeep extends EventManager {
         .invokeMethod<void>('setup', <String, dynamic>{'options': options});
   }
 
-  Future<bool> _setupAndroid({
-    required Map<String, dynamic> options,
-    required bool backgroundMode,
-  }) async {
+  Future<void> _setupAndroid({required Map<String, dynamic> options}) async {
     await _channel.invokeMethod<void>('setup', {'options': options});
+  }
 
-    if (backgroundMode) {
-      return true;
-    }
+  Future<bool> setupPermissions({List<String> additionalPermissions = const <String>[]}) async {
+    final bool alreadyHasPermissions = await hasPermissions(additionalPermissions);
+    if (alreadyHasPermissions) return true;
 
-    final additionalPermissions = options['additionalPermissions'] as List?;
-    final hasPermissions = await requestPermissions(
-      additionalPermissions?.cast<String>(),
+    final gotPermissions = await requestPermissions(
+      additionalPermissions
     );
-    if (!hasPermissions) return false;
+
+    if (!gotPermissions) return false;
 
     final hasPhoneAccount = await _hasPhoneAccount();
     if (hasPhoneAccount != false) return true;
@@ -394,11 +390,13 @@ class FlutterCallkeep extends EventManager {
     return resp ?? false;
   }
 
-  Future<bool> hasPermissions() async {
+  Future<bool> hasPermissions([List<String>? optionalPermissions]) async {
     if (isIOS) {
       return true;
     }
-    var resp = await _channel.invokeMethod<bool>('hasPermissions');
+    var resp = await _channel.invokeMethod<bool>('hasPermissions', <String, dynamic>{
+      'additionalPermissions': optionalPermissions ?? [],
+    });
     return resp ?? false;
   }
 

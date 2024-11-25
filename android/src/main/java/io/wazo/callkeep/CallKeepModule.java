@@ -205,7 +205,7 @@ public class CallKeepModule {
             }
             break;
             case "hasPermissions": {
-                hasPermissions(result);
+                hasPermissions(new ConstraintsArray(call.argument("additionalPermissions")), result);
             }
             break;
             case "setAvailable": {
@@ -364,7 +364,7 @@ public class CallKeepModule {
                            String handle,
                            String callerName,
                            Map<String, String> additionalData) {
-        if (!isConnectionServiceAvailable() || !hasPhoneAccount() || !hasPermissions() || handle == null) {
+        if (!isConnectionServiceAvailable() || !hasPhoneAccount() || !hasPermissions([]) || handle == null) {
             return;
         }
 
@@ -439,7 +439,7 @@ public class CallKeepModule {
             return;
         }
 
-        if (!this.hasPermissions()) {
+        if (!this.hasPermissions(additionalPermissions)) {
             List<String> allPermissions = new LinkedList<>(requiredPermissions);
             for (int i = 0; i < additionalPermissions.size(); i++) {
                 allPermissions.add(additionalPermissions.getString(i));
@@ -577,8 +577,8 @@ public class CallKeepModule {
     }
 
 
-    private void hasPermissions(@NonNull MethodChannel.Result result) {
-        result.success(this.hasPermissions());
+    private void hasPermissions(ConstraintsArray additionalPermissions, @NonNull MethodChannel.Result result) {
+        result.success(this.hasPermissions(additionalPermissions));
     }
 
     private void isCallActive(String uuid, @NonNull MethodChannel.Result result) {
@@ -721,9 +721,15 @@ public class CallKeepModule {
         return stringId == 0 ? applicationInfo.nonLocalizedLabel.toString() : appContext.getString(stringId);
     }
 
-    private Boolean hasPermissions() {
+    private Boolean hasPermissions(final String[] additionalPermissions) {
         boolean hasPermissions = true;
-        for (String permission : requiredPermissions) {
+
+        List<String> allPermissions = new LinkedList<>(requiredPermissions);
+        for (int i = 0; i < additionalPermissions.size(); i++) {
+            allPermissions.add(additionalPermissions.getString(i));
+        }
+
+        for (String permission : allPermissions) {
             int permissionCheck = ContextCompat.checkSelfPermission(currentActivity, permission);
             if (permissionCheck != PackageManager.PERMISSION_GRANTED) {
                 hasPermissions = false;
