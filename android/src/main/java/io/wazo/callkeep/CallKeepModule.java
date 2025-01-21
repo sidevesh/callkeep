@@ -364,7 +364,7 @@ public class CallKeepModule {
                            String handle,
                            String callerName,
                            Map<String, String> additionalData) {
-        if (!isConnectionServiceAvailable() || !hasPhoneAccount() || !hasPermissions([]) || handle == null) {
+        if (!isConnectionServiceAvailable() || !hasPhoneAccount() || !hasPermissions(new ConstraintsArray()) || handle == null) {
             return;
         }
 
@@ -721,7 +721,7 @@ public class CallKeepModule {
         return stringId == 0 ? applicationInfo.nonLocalizedLabel.toString() : appContext.getString(stringId);
     }
 
-    private Boolean hasPermissions(final String[] additionalPermissions) {
+    private Boolean hasPermissions(ConstraintsArray additionalPermissions) {
         boolean hasPermissions = true;
 
         List<String> allPermissions = new LinkedList<>(requiredPermissions);
