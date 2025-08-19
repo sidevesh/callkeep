@@ -36,6 +36,8 @@ import android.telecom.Connection;
 import android.telecom.PhoneAccount;
 import android.telecom.PhoneAccountHandle;
 import android.telecom.TelecomManager;
+import android.telecom.Connection;
+import android.telecom.CallAudioState;
 import android.telephony.TelephonyManager;
 import android.util.Log;
 import android.view.WindowManager;
@@ -178,6 +180,11 @@ public class CallKeepModule {
             break;
             case "setMutedCall": {
                 setMutedCall(call.argument("uuid"), call.argument("muted"));
+                result.success(null);
+            }
+            break;
+            case "setSpeaker": {
+                setSpeaker(call.argument("uuid"), call.argument("isOn"));
                 result.success(null);
             }
             break;
@@ -535,6 +542,23 @@ public class CallKeepModule {
         }
         //if the requester wants to mute, do that. otherwise unmute
         conn.setMuted(Boolean.TRUE.equals(shouldMute));
+    }
+
+
+    private void setSpeaker(String uuid, Boolean isOn) {
+        VoiceConnection conn = VoiceConnectionService.getConnection(uuid);
+        if (conn == null) {
+            return;
+        }
+        // Toggle route
+        int newRoute;
+        if (!isOn) {
+            newRoute = CallAudioState.ROUTE_EARPIECE;
+        } else {
+            newRoute = CallAudioState.ROUTE_SPEAKER;
+        }
+        // Set new audio route
+        conn.setAudioRoute(newRoute);
     }
 
 

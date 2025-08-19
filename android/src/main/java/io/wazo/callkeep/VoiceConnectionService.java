@@ -70,6 +70,7 @@ import java.util.UUID;
 import io.wazo.callkeep.utils.ConstraintsMap;
 
 // @see https://github.com/kbagchiGWC/voice-quickstart-android/blob/9a2aff7fbe0d0a5ae9457b48e9ad408740dfb968/exampleConnectionService/src/main/java/com/twilio/voice/examples/connectionservice/VoiceConnectionService.java
+@RequiresApi(api = Build.VERSION_CODES.M)
 public class VoiceConnectionService extends ConnectionService {
     private static Boolean isAvailable;
     private static Boolean isInitialized;
@@ -275,6 +276,7 @@ public class VoiceConnectionService extends ConnectionService {
         return false;
     }
 
+    @RequiresApi(api = Build.VERSION_CODES.R)
     private void startForegroundService() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             // Foreground services not required before SDK 28
@@ -324,7 +326,7 @@ public class VoiceConnectionService extends ConnectionService {
         if (!foregroundSettings.isNull("notificationId")) {
             notificationId = foregroundSettings.getInt("notificationId");
         }
-        startForeground(notificationId, notification);
+        startForeground(notificationId, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
     }
 
     @RequiresApi(api = Build.VERSION_CODES.N)

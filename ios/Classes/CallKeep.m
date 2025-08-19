@@ -98,6 +98,9 @@ static NSObject<CallKeepPushDelegate>* _delegate;
     } else if ([@"setMutedCall" isEqualToString:method]) {
         [self setMutedCall:argsMap[@"uuid"] muted:[argsMap[@"muted"] boolValue]];
         result(nil);
+    } else if ([@"setSpeaker" isEqualToString:method]) {
+        [self setSpeaker:argsMap[@"uuid"] isOn:[argsMap[@"isOn"] boolValue]];
+        result(nil);
     } else if ([@ "sendDTMF" isEqualToString:method]) {
         [self sendDTMF:argsMap[@"uuid"] dtmf:argsMap[@"key"]];
         result(nil);
@@ -441,6 +444,40 @@ static NSObject<CallKeepPushDelegate>* _delegate;
     CXTransaction *transaction = [[CXTransaction alloc] init];
     [transaction addAction:setMutedAction];
     [self requestTransaction:transaction];
+}
+
+- (void)setSpeaker:(NSString *)uuidString isOn:(BOOL)isOn {
+#ifdef DEBUG
+  NSLog(@"[CallKeep][setSpeaker] isOn = %i", isOn);
+#endif
+
+  NSError *error = nil;
+  AVAudioSession *session = [AVAudioSession sharedInstance];
+
+  // Set audio session category for call use
+  BOOL success = [session setCategory:AVAudioSessionCategoryPlayAndRecord
+                          withOptions:AVAudioSessionCategoryOptionAllowBluetooth
+                                error:&error];
+  if (!success) {
+    NSLog(@"[CallKeep][Audio] Failed to set category: %@", error);
+    return;
+  }
+
+  // Activate audio session
+  success = [session setActive:YES error:&error];
+  if (!success) {
+    NSLog(@"[CallKeep][Audio] Failed to activate session: %@", error);
+    return;
+  }
+
+  // Route to speaker or earpiece
+  AVAudioSessionPortOverride override =
+      isOn ? AVAudioSessionPortOverrideSpeaker : AVAudioSessionPortOverrideNone;
+
+  success = [session overrideOutputAudioPort:override error:&error];
+  if (!success) {
+    NSLog(@"[CallKeep][Audio] Failed to override audio port: %@", error);
+  }
 }
 
 -(void) sendDTMF:(NSString *)uuidString dtmf:(NSString *)key

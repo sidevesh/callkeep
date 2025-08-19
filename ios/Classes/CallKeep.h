@@ -38,6 +38,7 @@ static NSString *_Nonnull const CallKeepActionEnd = @"CallKeepActionEnd";
 
 - (BOOL)handleMethodCall:(FlutterMethodCall* _Nonnull)call result:(FlutterResult _Nonnull )result;
 
+- (void)setSpeaker:(NSString *)uuidString isOn:(BOOL)isOn;
 + (BOOL)application:(UIApplication * _Nonnull)application
             openURL:(NSURL * _Nonnull)url
             options:(NSDictionary<UIApplicationOpenURLOptionsKey, id> * _Nonnull)options NS_AVAILABLE_IOS(9_0);
