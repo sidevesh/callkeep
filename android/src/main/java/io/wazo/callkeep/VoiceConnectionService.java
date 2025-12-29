@@ -115,12 +115,18 @@ public class VoiceConnectionService extends ConnectionService {
     public VoiceConnectionService() {
         super();
         Log.e(TAG, "Constructor");
-        isReachable = false;
-        isInitialized = false;
-        isAvailable = false;
+        // Only initialize static variables if they haven't been set yet
+        if (isReachable == null) {
+            isReachable = false;
+        }
+        if (isInitialized == null) {
+            isInitialized = false;
+        }
+        if (isAvailable == null) {
+            isAvailable = false;
+        }
         currentConnectionService = this;
     }
-
     @Override
     public void onCreate() {
         super.onCreate();
