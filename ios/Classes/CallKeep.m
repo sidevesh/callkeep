@@ -38,6 +38,10 @@ static NSObject<CallKeepPushDelegate>* _delegate;
 #endif
     if (self = [super init]) {
         _delayedEvents = [NSMutableArray array];
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(handleAudioRouteChanged:)
+                                                     name:AVAudioSessionRouteChangeNotification
+                                                   object:nil];
     }
     return self;
 }
@@ -117,6 +121,13 @@ static NSObject<CallKeepPushDelegate>* _delegate;
         [self reportConnectedOutgoingCallWithUUID:argsMap[@"uuid"]];
     } else if([@"reportUpdatedCall" isEqualToString:method]){
         [self reportUpdatedCall:argsMap[@"uuid"] contactIdentifier:argsMap[@"callerName"]];
+        result(nil);
+    } else if ([@"getAudioRoutes" isEqualToString:method]) {
+        [self getAudioRoutes:result];
+    } else if ([@"getAudioRoute" isEqualToString:method]) {
+        [self getAudioRoute:result];
+    } else if ([@"setAudioRoute" isEqualToString:method]) {
+        [self setAudioRoute:argsMap[@"uid"]];
         result(nil);
     } else {
         return NO;
@@ -448,35 +459,34 @@ static NSObject<CallKeepPushDelegate>* _delegate;
 
 - (void)setSpeaker:(NSString *)uuidString isOn:(BOOL)isOn {
 #ifdef DEBUG
-  NSLog(@"[CallKeep][setSpeaker] isOn = %i", isOn);
+  NSLog(@"[CallKeep][setSpeaker] isOn = %d", isOn);
 #endif
 
   NSError *error = nil;
   AVAudioSession *session = [AVAudioSession sharedInstance];
 
-  // Set audio session category for call use
-  BOOL success = [session setCategory:AVAudioSessionCategoryPlayAndRecord
-                          withOptions:AVAudioSessionCategoryOptionAllowBluetooth
-                                error:&error];
-  if (!success) {
-    NSLog(@"[CallKeep][Audio] Failed to set category: %@", error);
-    return;
-  }
+  // Use the same category/options/mode as configureAudioSession
+  // It's safer to not re-set category if it's already active, but to ensure we can override, we should be in PlayAndRecord.
+  // The error -12860 (IncompatibleCategory) suggests we might not be in the right category or state.
+  
+  // We won't force setActive:YES here, assuming CallKit or the system has activated it during the call.
+  // Assuming the call is active.
 
-  // Activate audio session
-  success = [session setActive:YES error:&error];
-  if (!success) {
-    NSLog(@"[CallKeep][Audio] Failed to activate session: %@", error);
-    return;
-  }
-
-  // Route to speaker or earpiece
   AVAudioSessionPortOverride override =
       isOn ? AVAudioSessionPortOverrideSpeaker : AVAudioSessionPortOverrideNone;
 
-  success = [session overrideOutputAudioPort:override error:&error];
+  BOOL success = [session overrideOutputAudioPort:override error:&error];
   if (!success) {
     NSLog(@"[CallKeep][Audio] Failed to override audio port: %@", error);
+    // If it failed, try setting category again and retry
+    if (error.code == AVAudioSessionErrorCodeIncompatibleCategory) {
+         NSLog(@"[CallKeep][Audio] Retrying after setting category...");
+         [session setCategory:AVAudioSessionCategoryPlayAndRecord withOptions:AVAudioSessionCategoryOptionAllowBluetooth error:nil];
+         [session overrideOutputAudioPort:override error:&error];
+         if (error) {
+              NSLog(@"[CallKeep][Audio] Retry failed: %@", error);
+         }
+    }
   }
 }
 
@@ -491,6 +501,121 @@ static NSObject<CallKeepPushDelegate>* _delegate;
     [transaction addAction:dtmfAction];
     
     [self requestTransaction:transaction];
+}
+
+- (int)getAudioRouteInt:(NSString *)portType {
+    if ([portType isEqualToString:AVAudioSessionPortBuiltInSpeaker]) {
+        return 8; // Speaker
+    } else if ([portType isEqualToString:AVAudioSessionPortBuiltInReceiver]) {
+        return 1; // Earpiece
+    } else if ([portType isEqualToString:AVAudioSessionPortHeadphones]) {
+        return 4; // Wired Headset
+    } else if ([portType isEqualToString:AVAudioSessionPortBluetoothA2DP] ||
+               [portType isEqualToString:AVAudioSessionPortBluetoothLE] ||
+               [portType isEqualToString:AVAudioSessionPortBluetoothHFP]) {
+        return 2; // Bluetooth
+    }
+    return 1; // Default to earpiece
+}
+
+- (void)updateAudioRoute {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        AVAudioSessionRouteDescription *currentRoute = [AVAudioSession sharedInstance].currentRoute;
+        AVAudioSessionPortDescription *output = currentRoute.outputs.count > 0 ? currentRoute.outputs[0] : nil;
+        NSString *portType = output ? output.portType : nil;
+        NSString *portName = output ? output.portName : nil;
+        int route = [self getAudioRouteInt:portType];
+        
+        NSLog(@"[CallKeep][Audio] updateAudioRoute: portType=%@ portName=%@", portType, portName);
+
+        if (self.callKeepCallController == nil) {
+            return;
+        }
+        
+        CXCallObserver *callObserver = self.callKeepCallController.callObserver;
+        for (CXCall *call in callObserver.calls) {
+            NSLog(@"[CallKeep][Audio] Sending event for call: %@", call.UUID.UUIDString);
+            if (!call.hasEnded && call.UUID) {
+                 [self sendEventWithNameWrapper:@"CallKeepDidChangeAudioAction" body:@{
+                     @"callUUID": [call.UUID.UUIDString lowercaseString],
+                     @"audioRoute": @(route),
+                     @"handle": portType ? portType : @"",
+                     @"name": portName ? portName : @""
+                 }];
+            }
+        }
+    });
+}
+
+- (void)handleAudioRouteChanged:(NSNotification *)notification {
+    NSDictionary *userInfo = notification.userInfo;
+    NSInteger reason = [[userInfo objectForKey:AVAudioSessionRouteChangeReasonKey] integerValue];
+    NSLog(@"[CallKeep][Audio] Route changed. Reason: %ld", (long)reason);
+    [self updateAudioRoute];
+}
+
+- (void)getAudioRoute:(FlutterResult)result {
+    AVAudioSessionRouteDescription *currentRoute = [AVAudioSession sharedInstance].currentRoute;
+    AVAudioSessionPortDescription *output = currentRoute.outputs.count > 0 ? currentRoute.outputs[0] : nil;
+    NSString *portType = output ? output.portType : nil;
+    NSString *portName = output ? output.portName : nil;
+    
+    result(@{
+        @"type": portType ? portType : @"",
+        @"name": portName ? portName : @""
+    });
+}
+
+- (void)getAudioRoutes:(FlutterResult)result {
+    NSMutableArray *routes = [NSMutableArray array];
+    AVAudioSession *session = [AVAudioSession sharedInstance];
+    
+    // Always add Speaker (use a special UID we can recognize)
+    [routes addObject:@{ 
+        @"name": @"Speaker", 
+        @"type": AVAudioSessionPortBuiltInSpeaker,
+        @"uid": @"SPEAKER_UID"
+    }];
+    
+    for (AVAudioSessionPortDescription *input in session.availableInputs) {
+        [routes addObject:@{
+            @"name": input.portName,
+            @"type": input.portType,
+            @"uid": input.UID
+        }];
+    }
+    
+    result(routes);
+}
+
+- (void)setAudioRoute:(NSString *)uid {
+     AVAudioSession *session = [AVAudioSession sharedInstance];
+     NSError *error = nil;
+     
+     if ([uid isEqualToString:@"SPEAKER_UID"]) {
+         // Override to Speaker
+         [session overrideOutputAudioPort:AVAudioSessionPortOverrideSpeaker error:&error];
+     } else {
+         // Override to None (allows routing to preferred input)
+         [session overrideOutputAudioPort:AVAudioSessionPortOverrideNone error:&error];
+         
+         // Find the input matching the UID and set as preferred
+         for (AVAudioSessionPortDescription *desc in session.availableInputs) {
+              if ([desc.UID isEqualToString:uid]) {
+                   [session setPreferredInput:desc error:&error];
+                   break;
+              }
+         }
+     }
+     
+     if (error) {
+         NSLog(@"[CallKeep] Error setting audio route: %@", error);
+     }
+
+     // Force update after a short delay to allow audio session to settle
+     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+         [self updateAudioRoute];
+     });
 }
 
 -(BOOL) isCallActive:(NSString *)uuidString
@@ -746,17 +871,23 @@ static NSObject<CallKeepPushDelegate>* _delegate;
     NSLog(@"[CallKeep][configureAudioSession] Activating audio session");
 #endif
     
+    NSError *error = nil;
     AVAudioSession* audioSession = [AVAudioSession sharedInstance];
-    [audioSession setCategory:AVAudioSessionCategoryPlayAndRecord withOptions:AVAudioSessionCategoryOptionAllowBluetooth error:nil];
+    BOOL success = [audioSession setCategory:AVAudioSessionCategoryPlayAndRecord withOptions:AVAudioSessionCategoryOptionAllowBluetooth error:&error];
+    if (!success) {
+        NSLog(@"[CallKeep][Audio] Failed to set category: %@", error);
+    }
     
-    [audioSession setMode:AVAudioSessionModeVoiceChat error:nil];
+    [audioSession setMode:AVAudioSessionModeVoiceChat error:&error];
+    if (error) {
+        NSLog(@"[CallKeep][Audio] Failed to set mode: %@", error);
+    }
     
     double sampleRate = 44100.0;
     [audioSession setPreferredSampleRate:sampleRate error:nil];
     
     NSTimeInterval bufferDuration = .005;
     [audioSession setPreferredIOBufferDuration:bufferDuration error:nil];
-    [audioSession setActive:TRUE error:nil];
 }
 
 + (BOOL)application:(UIApplication *)application
@@ -953,8 +1084,8 @@ continueUserActivity:(NSUserActivity *)userActivity
     NSLog(@"[CallKeep][CXProviderDelegate][provider:didActivateAudioSession]");
 #endif
     [self sendDefaultAudioInterruptionNotificationToStartAudioResource];
-    [self configureAudioSession];
     [self sendEventWithNameWrapper:CallKeepDidActivateAudioSession body:@{}];
+    [self updateAudioRoute];
 }
 
 - (void)provider:(CXProvider *)provider didDeactivateAudioSession:(AVAudioSession *)audioSession

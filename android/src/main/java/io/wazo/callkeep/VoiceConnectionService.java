@@ -88,6 +88,13 @@ public class VoiceConnectionService extends ConnectionService {
         return null;
     }
 
+    public static VoiceConnection getFirstConnection() {
+        if (!currentConnections.isEmpty()) {
+            return currentConnections.values().iterator().next();
+        }
+        return null;
+    }
+
     public static ConstraintsMap getSettings(@Nullable Context context) {
         return CallKeepModule.getSettings(context);
     }

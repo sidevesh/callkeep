@@ -1,12 +1,19 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:callkeep/callkeep.dart';
 import 'package:logger/logger.dart';
+// import 'package:path_provider/path_provider.dart'; // Commented out in original
+import 'package:record/record.dart'; // Assuming this is needed or was present
 import 'package:uuid/uuid.dart';
+import 'package:flutter/cupertino.dart'; // Added for Cupertino Icons
 
 /// For fcm background message handler.
 final FlutterCallkeep _callKeep = FlutterCallkeep();
@@ -61,6 +68,7 @@ Future<dynamic> myBackgroundMessageHandler(RemoteMessage message) {
       options: <String, dynamic>{
         'ios': {
           'appName': 'CallKeepDemo',
+          'supportsDTMF': true,
         },
         'android': {
           'additionalPermissions': [
@@ -105,7 +113,24 @@ Future<dynamic> myBackgroundMessageHandler(RemoteMessage message) {
   return Future.value(null);
 }
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  final String configString =
+      await rootBundle.loadString('assets/firebase_config.json');
+  final Map<String, dynamic> config = jsonDecode(configString);
+
+  await Firebase.initializeApp(
+    options: FirebaseOptions(
+      apiKey: config['apiKey'],
+      appId: config['appId'],
+      messagingSenderId: config['messagingSenderId'],
+      projectId: config['projectId'],
+      authDomain: config['authDomain'],
+      storageBucket: config['storageBucket'],
+    ),
+  );
+
   Logger.level = Level.all;
   runApp(const MyApp());
 }
@@ -135,10 +160,17 @@ class Call {
   String number;
   bool held = false;
   bool muted = false;
+  bool speaker = false;
+  String? audioRouteName;
+  String? audioRouteType;
 }
 
-class MyAppState extends State<HomePage> {
+class MyAppState extends State<HomePage> with WidgetsBindingObserver {
   final FlutterCallkeep _callKeep = FlutterCallkeep();
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  final AudioRecorder _audioRecorder = AudioRecorder();
+  Timer? _echoTimer;
+  // int _echoFileIndex = 0;
   Map<String, Call> calls = {};
   String newUUID() => const Uuid().v4();
   final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
@@ -152,6 +184,42 @@ class MyAppState extends State<HomePage> {
       provisional: false,
     );
     logger.d('Settings registered: $settings');
+  }
+
+  Future<void> _startEchoLoop() async {
+    _stopEchoLoop();
+    // final tempDir = await getTemporaryDirectory();
+
+    // // Start first recording
+    // String filePath = '${tempDir.path}/echo_$_echoFileIndex.m4a';
+    await _audioPlayer
+        .play(UrlSource('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3'));
+    await _audioPlayer.setReleaseMode(ReleaseMode.loop);
+    // if (await _audioRecorder.hasPermission()) {
+    //   await _audioRecorder.start(const RecordConfig(), path: filePath);
+    // }
+
+    // _echoTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
+    //   // Stop recording current
+    //   final path = await _audioRecorder.stop();
+
+    //   // Play previous recording (which is the one we just stopped)
+    //   if (path != null) {
+    //     await _audioPlayer.play(DeviceFileSource(path));
+    //   }
+
+    //   // Start new recording
+    //   _echoFileIndex++;
+    //   String nextFilePath = '${tempDir.path}/echo_$_echoFileIndex.m4a';
+    //   await _audioRecorder.start(const RecordConfig(), path: nextFilePath);
+    // });
+  }
+
+  Future<void> _stopEchoLoop() async {
+    _echoTimer?.cancel();
+    _echoTimer = null;
+    // await _audioRecorder.stop();
+    await _audioPlayer.stop();
   }
 
   void removeCall(String callUUID) {
@@ -181,6 +249,8 @@ class MyAppState extends State<HomePage> {
     }
     logger.d('[answerCall] $callUUID, number: $number');
 
+    await _startEchoLoop();
+
     Timer(const Duration(seconds: 1), () {
       logger.d('[setCurrentCallActive] $callUUID, number: $number');
       _callKeep.setCurrentCallActive(callUUID);
@@ -194,6 +264,7 @@ class MyAppState extends State<HomePage> {
       return;
     }
     logger.d('[endCall] $callUUID');
+    await _stopEchoLoop();
     removeCall(callUUID);
   }
 
@@ -221,9 +292,10 @@ class MyAppState extends State<HomePage> {
     _callKeep.startCall(
         uuid: callUUID, handle: call.number, callerName: call.number);
 
-    Timer(const Duration(seconds: 1), () {
+    Timer(const Duration(seconds: 1), () async {
       logger.d('[setCurrentCallActive] $callUUID, number: ${callData.handle}');
       _callKeep.setCurrentCallActive(callUUID);
+      await _startEchoLoop();
     });
   }
 
@@ -240,6 +312,11 @@ class MyAppState extends State<HomePage> {
         '[didPerformSetMutedCallAction] $callUUID, number: $number ($muted)');
 
     setCallMuted(callUUID, muted);
+    if (muted) {
+      // await _audioRecorder.pause();
+    } else {
+      // await _audioRecorder.resume();
+    }
   }
 
   Future<void> didToggleHoldCallAction(
@@ -253,11 +330,37 @@ class MyAppState extends State<HomePage> {
     final hold = event.hold ?? false;
     logger.d('[didToggleHoldCallAction] $callUUID, number: $number ($hold)');
 
+    if (hold) {
+      await _audioPlayer.pause();
+    } else {
+      await _audioPlayer.resume();
+    }
+
     setCallHeld(callUUID, hold);
+  }
+
+  Future<void> didChangeAudioAction(CallKeepDidChangeAudioAction event) async {
+    final String? callUUID = event.callUUID;
+    final int? audioRoute = event.audioRoute;
+    if (callUUID == null || audioRoute == null) {
+      if (callUUID == null) logger.e("[didChangeAudioAction] callUUID is null");
+      // if (audioRoute == null) logger.e("[didChangeAudioAction] audioRoute is null");
+      // return;
+    }
+    logger.d('[didChangeAudioAction] $callUUID, route: $audioRoute, name: ${event.name}, handle: ${event.handle}');
+    // Android: 8 is SPEAKER.
+    // bool speaker = (audioRoute == 8); 
+    setState(() {
+      // calls[callUUID]?.speaker = speaker;
+      calls[callUUID]?.audioRouteName = event.name;
+      calls[callUUID]?.audioRouteType = event.handle;
+    });
+    // print('[didChangeAudioAction] $callUUID, route: $audioRoute, speaker: $speaker');
   }
 
   Future<void> hangup(String callUUID) async {
     _callKeep.endCall(callUUID);
+    await _stopEchoLoop();
     removeCall(callUUID);
   }
 
@@ -266,6 +369,12 @@ class MyAppState extends State<HomePage> {
     final String handle = calls[callUUID]?.number ?? "No Number";
     logger.d('[setOnHold: $held] $callUUID, number: $handle');
     setCallHeld(callUUID, held);
+
+    if (held) {
+      await _audioPlayer.pause();
+    } else {
+      await _audioPlayer.resume();
+    }
   }
 
   Future<void> setMutedCall(String callUUID, bool muted) async {
@@ -273,7 +382,72 @@ class MyAppState extends State<HomePage> {
     final String handle = calls[callUUID]?.number ?? "No Number";
     logger.d('[setMutedCall: $muted] $callUUID, number: $handle');
     setCallMuted(callUUID, muted);
+
+    if (muted) {
+      // await _audioRecorder.pause();
+    } else {
+      // await _audioRecorder.resume();
+    }
   }
+
+  IconData getIconForAudioRoute(String type) {
+    if (type == 'Speaker') {
+      return CupertinoIcons.speaker_2;
+    }
+    if (type == 'Headphones' || type == 'HeadsetMic') {
+      return CupertinoIcons.headphones;
+    }
+    if (type == 'BluetoothA2DP' || type == 'BluetoothLE' || type == 'BluetoothHFP') {
+      return CupertinoIcons.bluetooth;
+    }
+    if (type == 'Receiver') {
+      return CupertinoIcons.phone;
+    }
+    if (type == 'CarAudio') {
+      return CupertinoIcons.car_detailed;
+    }
+    return CupertinoIcons.phone_fill;
+  }
+
+  Future<void> showAudioRoutePicker(String uuid) async {
+    List<Map<String, dynamic>> routes = await _callKeep.getAudioRoutes();
+    if (!mounted) return;
+
+    await showModalBottomSheet(
+      context: context,
+      builder: (context) {
+        return ListView.builder(
+          shrinkWrap: true,
+          itemCount: routes.length,
+          itemBuilder: (context, index) {
+            final route = routes[index];
+            final name = route['name'] ?? 'Unknown';
+            final type = route['type'] ?? 'Unknown';
+            // final isSelected = route['selected'] == true; // Assuming getAudioRoutes might eventually return selection status, or we track it elsewhere
+
+            return ListTile(
+              leading: Icon(getIconForAudioRoute(type)),
+              title: Text(name),
+              subtitle: Text(type),
+              onTap: () async {
+                await _callKeep.setAudioRoute(route['uid']);
+                Navigator.pop(context);
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // Future<void> toggleSpeaker(String callUUID, bool speaker) async {
+  //   await _callKeep.setSpeaker(uuid: callUUID, isOn: speaker);
+  //   final String handle = calls[callUUID]?.number ?? "No Number";
+  //   logger.d('[toggleSpeaker: $speaker] $callUUID, number: $handle');
+  //   setState(() {
+  //     calls[callUUID]?.speaker = speaker;
+  //   });
+  // }
 
   Future<void> updateDisplay(String callUUID) async {
     final String number = calls[callUUID]?.number ?? "No Number";
@@ -343,6 +517,7 @@ class MyAppState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _callKeep.on<CallKeepDidDisplayIncomingCall>(didDisplayIncomingCall);
     _callKeep.on<CallKeepPerformAnswerCallAction>(answerCall);
     _callKeep.on<CallKeepDidPerformDTMFAction>(didPerformDTMFAction);
@@ -350,6 +525,7 @@ class MyAppState extends State<HomePage> {
     _callKeep.on<CallKeepDidToggleHoldAction>(didToggleHoldCallAction);
     _callKeep
         .on<CallKeepDidPerformSetMutedCallAction>(didPerformSetMutedCallAction);
+    _callKeep.on<CallKeepDidChangeAudioAction>(didChangeAudioAction);
     _callKeep.on<CallKeepPerformEndCallAction>(endCall);
     _callKeep.on<CallKeepPushKitToken>(onPushKitToken);
 
@@ -378,6 +554,7 @@ class MyAppState extends State<HomePage> {
       options: <String, dynamic>{
         'ios': {
           'appName': 'CallKeepDemo',
+          'supportsDTMF': true,
         },
         'android': {
           'additionalPermissions': [
@@ -432,6 +609,34 @@ class MyAppState extends State<HomePage> {
     }
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _updateAudioRoute();
+    }
+  }
+
+  Future<void> _updateAudioRoute() async {
+    final route = await _callKeep.getAudioRoute();
+    if (route != null) {
+      setState(() {
+        for (var call in calls.values) {
+          call.audioRouteName = route['name'];
+          call.audioRouteType = route['type'];
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _audioPlayer.dispose();
+    _audioRecorder.dispose();
+    _echoTimer?.cancel();
+    super.dispose();
+  }
+
   Widget buildCallingWidgets() {
     return Column(
         mainAxisAlignment: MainAxisAlignment.start,
@@ -440,6 +645,7 @@ class MyAppState extends State<HomePage> {
                 Column(mainAxisAlignment: MainAxisAlignment.start, children: [
                   Text('number: ${item.value.number}'),
                   Text('uuid: ${item.key}'),
+                  // Text('Speaker: ${item.value.speaker ? "On" : "Off"}'),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: <Widget>[
@@ -460,6 +666,17 @@ class MyAppState extends State<HomePage> {
                           setMutedCall(item.key, !item.value.muted);
                         },
                         child: Text(item.value.muted ? 'Unmute' : 'Mute'),
+                      ),
+                    ],
+                  ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: <Widget>[
+                      ElevatedButton(
+                        onPressed: () async {
+                          showAudioRoutePicker(item.key);
+                        },
+                        child: Text(item.value.audioRouteName ?? 'Audio Options'),
                       ),
                       ElevatedButton(
                         onPressed: () async {
@@ -495,6 +712,14 @@ class MyAppState extends State<HomePage> {
                   displayIncomingCallDelayed('10086');
                 },
                 child: const Text('Display incoming call now in 3s'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Timer(const Duration(seconds: 10), () {
+                    displayIncomingCall('10086');
+                  });
+                },
+                child: const Text('Display incoming call in 10s (Background)'),
               ),
               buildCallingWidgets()
             ],

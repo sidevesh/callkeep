@@ -193,6 +193,18 @@ public class CallKeepModule {
                 result.success(null);
             }
             break;
+            case "getAudioRoutes": {
+                getAudioRoutes(result);
+            }
+            break;
+            case "getAudioRoute": {
+                getAudioRoute(result);
+            }
+            break;
+            case "setAudioRoute": {
+                setAudioRoute(call.argument("uid"), result);
+            }
+            break;
             case "sendDTMF": {
                 sendDTMF(call.argument("uuid"), call.argument("key"));
                 result.success(null);
@@ -553,7 +565,21 @@ public class CallKeepModule {
         // Toggle route
         int newRoute;
         if (!isOn) {
-            newRoute = CallAudioState.ROUTE_EARPIECE;
+            CallAudioState state = conn.getCallAudioState();
+            if (state == null) {
+                return;
+            }
+            int supportedRouteMask = state.getSupportedRouteMask();
+            
+            if ((supportedRouteMask & CallAudioState.ROUTE_WIRED_HEADSET) != 0) {
+                newRoute = CallAudioState.ROUTE_WIRED_HEADSET;
+            } else if ((supportedRouteMask & CallAudioState.ROUTE_BLUETOOTH) != 0) {
+                newRoute = CallAudioState.ROUTE_BLUETOOTH;
+            } else if ((supportedRouteMask & CallAudioState.ROUTE_EARPIECE) != 0) {
+                newRoute = CallAudioState.ROUTE_EARPIECE;
+            } else {
+                newRoute = CallAudioState.ROUTE_EARPIECE;
+            }
         } else {
             newRoute = CallAudioState.ROUTE_SPEAKER;
         }
@@ -569,6 +595,103 @@ public class CallKeepModule {
         }
         //if the requester wants to mute, do that. otherwise unmute
         conn.setAudio(audioRoute);
+    }
+
+    private void getAudioRoutes(Result result) {
+        VoiceConnection connection = VoiceConnectionService.getFirstConnection();
+        if (connection == null) {
+            result.success(new ArrayList<>());
+            return;
+        }
+        CallAudioState state = connection.getContentAudioState();
+        if (state == null) {
+            result.success(new ArrayList<>());
+            return;
+        }
+
+        List<Map<String, Object>> routes = new ArrayList<>();
+        int mask = state.getSupportedRouteMask();
+
+        if ((mask & CallAudioState.ROUTE_EARPIECE) != 0) {
+            Map<String, Object> route = new HashMap<>();
+            route.put("name", "Earpiece");
+            route.put("type", "Earpiece");
+            route.put("uid", String.valueOf(CallAudioState.ROUTE_EARPIECE));
+            routes.add(route);
+        }
+        if ((mask & CallAudioState.ROUTE_SPEAKER) != 0) {
+            Map<String, Object> route = new HashMap<>();
+            route.put("name", "Speaker");
+            route.put("type", "Speaker");
+            route.put("uid", String.valueOf(CallAudioState.ROUTE_SPEAKER));
+            routes.add(route);
+        }
+        if ((mask & CallAudioState.ROUTE_WIRED_HEADSET) != 0) {
+            Map<String, Object> route = new HashMap<>();
+            route.put("name", "Wired Headset");
+            route.put("type", "WiredHeadset");
+            route.put("uid", String.valueOf(CallAudioState.ROUTE_WIRED_HEADSET));
+            routes.add(route);
+        }
+        if ((mask & CallAudioState.ROUTE_BLUETOOTH) != 0) {
+            Map<String, Object> route = new HashMap<>();
+            route.put("name", "Bluetooth");
+            route.put("type", "Bluetooth");
+            route.put("uid", String.valueOf(CallAudioState.ROUTE_BLUETOOTH));
+            routes.add(route);
+        }
+        result.success(routes);
+    }
+
+    private void getAudioRoute(Result result) {
+        VoiceConnection connection = VoiceConnectionService.getFirstConnection();
+        if (connection == null) {
+            result.success(null);
+            return;
+        }
+        CallAudioState state = connection.getContentAudioState();
+         if (state == null) {
+            result.success(null);
+            return;
+        }
+        int route = state.getRoute();
+        Map<String, Object> routeMap = new HashMap<>();
+        String name = "Unknown";
+         String type = "Unknown";
+
+        if (route == CallAudioState.ROUTE_EARPIECE) {
+             name = "Earpiece";
+             type = "Earpiece";
+        } else if (route == CallAudioState.ROUTE_SPEAKER) {
+             name = "Speaker";
+             type = "Speaker";
+        } else if (route == CallAudioState.ROUTE_WIRED_HEADSET) {
+             name = "Wired Headset";
+             type = "WiredHeadset";
+        } else if (route == CallAudioState.ROUTE_BLUETOOTH) {
+             name = "Bluetooth";
+             type = "Bluetooth";
+        }
+
+        routeMap.put("name", name);
+        routeMap.put("type", type);
+        routeMap.put("uid", String.valueOf(route));
+        result.success(routeMap);
+    }
+
+    private void setAudioRoute(String uid, Result result) {
+         VoiceConnection connection = VoiceConnectionService.getFirstConnection();
+        if (connection == null) {
+            result.success(null);
+            return;
+        }
+        try {
+            int route = Integer.parseInt(uid);
+            connection.setAudioRoute(route);
+            result.success(null);
+        } catch (NumberFormatException e) {
+            result.error("INVALID_UID", "Invalid audio route uid", null);
+        }
     }
 
 
@@ -937,7 +1060,13 @@ public class CallKeepModule {
                     sendEventToFlutter("CallKeepDidPerformDTMFAction", args);
                     break;
                 case ACTION_AUDIO_CALL:
-                    args.putString("route", (String) attributeMap.get("audioRoute"));
+                    Object audioRouteObj = attributeMap.get("audioRoute");
+                    if (audioRouteObj != null) {
+                        args.putInt("audioRoute", (Integer) audioRouteObj);
+                    }
+                    if (attributeMap.containsKey("audioRouteName")) {
+                        args.putString("name", (String) attributeMap.get("audioRouteName"));
+                    }
                     args.putString("callUUID", (String) attributeMap.get(EXTRA_CALL_UUID));
                     sendEventToFlutter("CallKeepDidChangeAudioAction", args);
                     break;

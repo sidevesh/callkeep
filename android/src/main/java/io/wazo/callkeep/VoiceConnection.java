@@ -125,9 +125,19 @@ public class VoiceConnection extends Connection {
                 connectionData.put("audioRoute", state.getRoute());
                 HashMap<String, Object> data = new HashMap<>(connectionData);
                 data.put("audioRoute", state.getRoute());
-                data.put("audioRouteName", CallAudioState.audioRouteToString(state.getRoute()));
+                data.put("audioRouteName", getAudioRouteName(state.getRoute()));
                 sendCallRequestToActivity(ACTION_AUDIO_CALL, data);
             }
+        }
+    }
+
+    private String getAudioRouteName(int route) {
+        switch (route) {
+            case CallAudioState.ROUTE_EARPIECE: return "Earpiece";
+            case CallAudioState.ROUTE_SPEAKER: return "Speaker";
+            case CallAudioState.ROUTE_WIRED_HEADSET: return "Wired Headset";
+            case CallAudioState.ROUTE_BLUETOOTH: return "Bluetooth";
+            default: return "Unknown";
         }
     }
 
@@ -135,6 +145,10 @@ public class VoiceConnection extends Connection {
         CallAudioState current = getCallAudioState();
         if (current != null) return current;
         throw new UnsupportedOperationException();
+    }
+
+    public CallAudioState getContentAudioState() {
+        return getCallAudioState();
     }
 
     @Override

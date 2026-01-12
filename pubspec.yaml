@@ -27,3 +27,5 @@ flutter:
         pluginClass: FlutterCallkeepPlugin
       ios:
         pluginClass: FlutterCallkeepPlugin
+flutter_intl:
+  enabled: true

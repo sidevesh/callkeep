@@ -1,0 +1,9 @@
+{
+      "apiKey": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "appId": "x:xxxxxxxxxxxx:xxx:xxxxxxxxxxxxxxxxxxxxxx",
+      "messagingSenderId": "xxxxxxxxxxxx",
+      "projectId": "flutter-callkeep-example",
+      "storageBucket": "flutter-callkeep-example.example.com",
+      "iosClientId": "xxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com",
+      "iosBundleId": "com.sidevesh.flutter-callkeep-example"
+}

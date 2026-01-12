@@ -268,6 +268,24 @@ class FlutterCallkeep extends EventManager {
         'isOn': isOn,
       });
 
+  Future<List<Map<String, dynamic>>> getAudioRoutes() async {
+    final List<dynamic>? result =
+        await _channel.invokeMethod<List<dynamic>>('getAudioRoutes');
+    return result?.map((e) => Map<String, dynamic>.from(e as Map)).toList() ?? [];
+  }
+
+  Future<Map<String, dynamic>?> getAudioRoute() async {
+    final dynamic result = await _channel.invokeMethod('getAudioRoute');
+    return result != null ? Map<String, dynamic>.from(result as Map) : null;
+  }
+
+  Future<void> setAudioRoute(String uid) async {
+    await _channel.invokeMethod<void>(
+      'setAudioRoute',
+      <String, dynamic>{'uid': uid},
+    );
+  }
+
   Future<void> setAvailable({bool available = true}) async {
     if (isIOS) {
       return;
@@ -446,6 +464,9 @@ class FlutterCallkeep extends EventManager {
         break;
       case 'CallKeepDidActivateAudioSession':
         emit(CallKeepDidActivateAudioSession());
+        break;
+      case 'CallKeepDidChangeAudioAction':
+        emit(CallKeepDidChangeAudioAction.fromMap(data));
         break;
       case 'CallKeepDidDeactivateAudioSession':
         emit(CallKeepDidDeactivateAudioSession());
